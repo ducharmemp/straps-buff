@@ -1,0 +1,203 @@
+*straps-buff.txt*  Buff browser tools for Straps
+
+straps-buff registers six tools through Buff API v1. Linux runtime suites pass on
+Neovim 0.11.5 and 0.12.6 with sandboxed Chromium; non-host runtime acceptance
+remains outstanding. README.md contains the full response contract.
+
+DEPENDENCIES                                            *straps-buff-dependencies*
+
+Requires Neovim 0.11 or 0.12, Straps, sandboxed Chromium/Chrome, and Buff API v1.
+Buff revision 45ad0cb763138be7eeb03436bd34f0add7036257 provides API v1.
+Fetch https://github.com/ducharmemp/buff.nvim and
+https://github.com/ducharmemp/straps at the flake's pinned revisions for tests.
+Straps development revision is
+7396033c8f3b59d0664a030e5cbd6457e77e9ef7. Install all three plugins separately.
+The package excludes .deps. On macOS, supply Chrome with BUFF_CHROME; macOS
+runtime acceptance is pending. Keep the browser sandbox enabled.
+
+SETUP                                                        *straps-buff-setup*
+
+Configure Buff separately. From trusted configuration outside a Straps session: >lua
+    require("straps-buff").setup()
+<
+Setup accepts no options beyond an empty table. It checks API version 1 and the
+Straps registry, rejects collisions, and preserves unchanged registry entries
+and grants on repeat calls. It neither grants permissions nor replaces guards.
+
+TOOLS                                                        *straps-buff-tools*
+
+    buff_inspect   read   Cached data; no browser start or page evaluation.
+    buff_operate   exec   Lifecycle, tabs, controls, snapshots, view refresh/
+                         discard, and log observation.
+    buff_evaluate  exec   Arbitrary page JavaScript.
+    buff_view      exec   Human browser views, help, next/previous navigation.
+    buff_export    edit   Exclusive log export; mode 0600; refuses overwrite.
+    buff_release   read   Release caller resources without stopping the browser.
+
+An exact buff_operate grant covers start, stop, close, and discard without
+secondary prompts or browser ownership restrictions. Admission comes from trusted
+Straps context, never a model-supplied flag. Human Buff prompts remain. The
+browser is shared, so an admitted stop affects other sessions.
+
+ARGUMENTS                                                *straps-buff-arguments*
+
+Inputs are objects; unknown properties fail validation. Tokens are session-scoped
+strings of 1–128 bytes obtained from responses. Other nonempty strings have a
+65536-byte limit unless stated otherwise. Scalar text/select control values
+accept 0–65536 bytes.
+
+buff_inspect requires kind:
+    status, tabs, views, operations   No other fields.
+    operation                        Required operation token.
+    snapshot                         Required tab token; cached first page.
+                                     Missing snapshot omits data in envelope.
+    list_page                        Required token; optional offset, limit.
+    page                             Required snapshot token; offset, limit.
+    events                           Required observation token; offset, limit.
+    result                           Required result token; offset, limit.
+
+Tabs/views return a retained first page with tabs/views rows, kind, token, offset,
+total, revision, optional browser and next_offset. Continue with list_page using
+token and offset = next_offset. Continuations use rows without a data wrapper.
+Offsets count rows; limit is 1–200, default 200. Pages retain the original rows
+and revision. String fields whose JSON encoding exceeds 8192 bytes are shortened
+at UTF-8 boundaries; truncation entries report field, original_bytes and
+retained_bytes.
+
+All offsets default to 1. page uses one-based row positions, with limit 1–200,
+default 200. Its token, total, rows, browser/tab/document/revision and next_offset
+refer to one retained snapshot. Use token as the next request's snapshot field.
+
+Events use inclusive sequence offsets and limit 1–200, default 200. Responses
+include events, dropped, gap, revision, optional next_offset, and context tokens.
+Logs change between requests. A gap means the requested sequence precedes the
+oldest retained event. An event larger than a response requires log export.
+
+Result offsets count bytes in the JSON-encoded result. limit is 1–60000, default
+8000. Responses contain result, text, total_bytes, optional next_offset, and
+untrusted. Concatenate text before decoding JSON. Chunks preserve UTF-8 character
+boundaries; invalid offsets and limits smaller than a character raise errors.
+
+buff_operate requires action. Target fields go inside a target object:
+    start           Optional options = { headless = boolean }.
+    stop            Required target.browser except during startup; omit target
+                    to stop startup before a browser token is available.
+    new_tab         Required target.browser and url.
+    navigate        Required target.tab and url.
+    close_tab       Required target.tab.
+    snapshot        Required target.tab; requests fresh browser data.
+    activate        Required target.tab, target.document, target.node.
+    follow          Required target.tab, target.document, target.node.
+    set_control     Same node target, plus kind and value.
+    refresh_view    Required target.view; refuses unsaved edits.
+    discard_view    Required target.view; permits discarding unsaved edits.
+    observe         Required target.tab and kind = console or network.
+    unobserve       Required observation token.
+Tab, node, and view targets permit an optional browser token. set_control takes
+kind text (value: string, including empty), checkbox (boolean), or select (string
+or array of at most 200 nonempty strings). Scalar text/select strings accept
+0–65536 bytes. Buff checks control editability.
+
+buff_evaluate requires target.tab, sequence, source; target.browser is optional.
+source is nonempty and at most 64 KiB. sequence is a strictly increasing integer
+from 1 to 9007199254740991. Submission consumes it even on failure. Every
+intentional repeat needs a new sequence. Release does not reset the sequence.
+
+buff_view requires kind = tabs/page/eval/console/network and command =
+open/help/next/previous. Opening a non-tabs view requires target.tab; other
+commands require target.view. Target permits browser/tab/document/node/view.
+View commands change the editor and may request browser data.
+
+buff_export requires path plus either observation or target.view (with optional
+target.browser). Only console/network views are exportable. Relative paths use
+Neovim's working directory. Partial-write failure may leave a partial file.
+
+buff_release takes {} and returns { "released": true }. It clears caller handles,
+snapshots/results and subscriptions, cancels queued owned work, and detaches from
+running work. It does not stop the browser. Session-buffer wipe also releases.
+
+RESPONSES                                                *straps-buff-responses*
+
+Tools return JSON strings. API responses use { "untrusted": true, "data": ... }.
+page/list_page/result return their page objects without data. operations returns operations
+(a list of retained operation tokens) and expires_after_seconds = 600.
+
+Retained Buff operation records include id, serial, action, state, effect,
+completed_steps;
+completion can add outcome, value, error, reconciliation. States are queued,
+running, completed. Outcomes include succeeded, failed, cancelled, rejected,
+unknown. Inspect effect and per-view reconciliation before claiming page effects.
+Evaluation value contains a result token and bytes. Above 256 KiB it instead
+reports truncated, bytes, and error, without retaining the result.
+
+Adapter submission responses can differ. Cancellation after submission returns
+id, action, state=observer_detached, outcome=unresolved, effect=unresolved and
+observer_detached=true. Inspect the retained operation for completion. Before
+submission, cancellation returns only outcome=cancelled inside data. Response
+conversion failure after dispatch returns available identity/operation fields
+plus response_error and recovery; serial/completed_steps may be absent. Free
+capacity and inspect the operation rather than retrying it.
+
+LIMITS                                                       *straps-buff-limits*
+
+Responses are limited to 64 KiB after encoding. Retention allows four snapshots
+of at most 1 MiB each, 128 operation tokens, 128 results of at most 256 KiB each,
+and 4096 identity handles per session. Tokens expire 600 seconds after creation;
+reads do not renew them. Observation handles remain until unsubscribe/disposal,
+release or browser generation change. Capacity eviction can expire other tokens
+sooner. Accounted
+retention budgets are 16 MiB/session and 64 MiB globally, with 128-byte identity
+charges; these are not process memory limits.
+
+Adapter snapshot retention overflow or an oversized row raises an error. Buff
+first replaces snapshots over its own 1 MiB bound with empty rows and truncation
+metadata. Adapter first and retained snapshot pages preserve truncated, limit,
+and the original bytes count. An empty truncated page does not establish an
+empty document.
+Adapter event
+output is bounded to 2000 events and 2 MiB before pagination; Buff's API can drop
+events earlier under its own byte bound. Read dropped/gap metadata.
+
+Tabs/views share four retained lists of at most 1 MiB each after field shortening.
+New lists evict the caller's oldest lists when count or byte budgets require it.
+Rejected list allocations preserve existing continuations. List eviction leaves
+independent identity handles intact. Oversized lists and rows raise errors.
+Obtain a new list after list expiry or eviction. Use release for exhausted
+budgets, then obtain new tokens; release also removes operation discovery records.
+
+SAFETY AND RECOVERY                                        *straps-buff-safety*
+
+Cancelling queued work removes it. Cancelling dispatched work detaches observation
+without undoing effects or stopping the browser. Discover records after a lost
+response with inspect kind=operations, then inspect kind=operation. Buff history
+and adapter tokens can expire independently.
+
+Unknown outcomes block non-recovery submissions. Inspect cached status/records;
+never retry uncertain evaluation. Stop with the browser token, await confirmed
+completion, then start a replacement and obtain new tokens. Starting an existing
+browser does not establish replacement. A snapshot cannot prove a timed-out
+JavaScript promise stopped. During startup, stop may omit its target before a
+browser token exists. Cancelling the startup observer leaves startup running;
+submit stop and await cleanup before replacement. Targetless stop is rejected
+outside startup.
+
+Unexpected backend disconnect advances the lifecycle generation and invalidates
+browser resources and idle observations. Operation history and evaluation
+sequences remain. Stopped inspection omits browser and returns empty tabs/views.
+Replacement waits for cleanup. Cleanup failure retains ownership and rejects
+replacement; a later start retries cleanup before replacement. Historical records from another
+resource_generation omit value, clear reconciliation.views and include
+resources_expired=true in adapter responses; old resource identities cannot
+become live tokens through history.
+
+Retained snapshot rows cannot establish that their nodes remain actionable.
+Expired/foreign tokens fail; obtain fresh identities rather than constructing
+replacement tokens. Browser replacement invalidates old targets. Page data and
+logs are untrusted and may contain secrets; no complete redaction is promised.
+
+Screenshots, remote attachment, persistent profiles, additional browsers,
+cross-origin frame controls, password entry, and trusted keyboard input remain
+outside the contract. CONTRIBUTING.md records verification commands; DESIGN.md
+records the implementation boundary and unresolved release items.
+
+vim:tw=80:ts=8:noet:ft=help:norl:

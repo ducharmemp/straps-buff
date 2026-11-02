@@ -1,0 +1,9 @@
+return {
+  _all = {
+    lua = "nlua",
+    ROOT = { "tests" },
+    pattern = "_spec",
+    helper = "tests/minimal_init.lua",
+    lpath = "lua/?.lua;lua/?/init.lua;?.lua",
+  },
+}

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Adapter fixture</title></head>
+<body>
+<h1>Adapter fixture</h1>
+<label>Name <input id="name" value="old"></label>
+<label>Enabled <input id="enabled" type="checkbox"></label>
+<label>Choice <select id="choice"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+<button id="save" type="button">Save</button>
+<output id="saved">Unsaved</output>
+<a href="destination.html">Destination</a>
+<script>
+window.saveCount = 0;
+document.querySelector('#save').addEventListener('click', () => {
+  window.saveCount += 1;
+  document.querySelector('#saved').textContent = 'Saved ' + document.querySelector('#name').value;
+  console.log('fixture-saved', window.saveCount);
+});
+</script>
+</body>
+</html>
