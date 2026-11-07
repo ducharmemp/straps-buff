@@ -7,7 +7,10 @@
   inputs.buff = { url = "github:ducharmemp/buff.nvim/45ad0cb763138be7eeb03436bd34f0add7036257"; flake = false; };
   inputs.straps = { url = "github:ducharmemp/straps/7396033c8f3b59d0664a030e5cbd6457e77e9ef7"; flake = false; };
 
-  outputs = { self, nixpkgs, nixpkgs-0_11, buff, straps }:
+  inputs.nixvim.url = "github:nix-community/nixvim/453dc9c5037e6d1bec81d2a51ddacd58a2f44e9c";
+  inputs.nixvim.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { self, nixpkgs, nixpkgs-0_11, buff, straps, nixvim }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
@@ -25,6 +28,37 @@
         version = "dev";
         src = pluginSource;
       };
+      dependencyFlake = source:
+        let outputs = (import "${source}/flake.nix").outputs { self = source // outputs; inherit nixpkgs; };
+        in outputs;
+      buffFlake = dependencyFlake buff;
+      strapsFlake = dependencyFlake straps;
+      adapterModule = { config, lib, pkgs, ... }:
+        let cfg = config.plugins.straps-buff;
+        in {
+          imports = [ buffFlake.nixvimModules.default strapsFlake.nixvimModules.default ];
+          options.plugins.straps-buff = {
+            enable = lib.mkEnableOption "Buff browser tools for Straps";
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = mkPlugin pkgs;
+              description = "The straps-buff plugin package.";
+            };
+          };
+          config = lib.mkIf cfg.enable {
+            plugins.buff.enable = lib.mkDefault true;
+            plugins.straps.enable = lib.mkDefault true;
+            assertions = [
+              { assertion = config.plugins.buff.enable; message = "straps-buff requires plugins.buff.enable."; }
+              { assertion = config.plugins.straps.enable; message = "straps-buff requires plugins.straps.enable."; }
+            ];
+            extraPlugins = [ cfg.package ];
+            extraPackages = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.chromium ];
+            extraConfigLua = lib.mkAfter ''
+              require("straps-buff").setup()
+            '';
+          };
+        };
       fetchDeps = pkgs: pkgs.writeShellApplication {
         name = "fetch-deps";
         runtimeInputs = [ pkgs.coreutils ];
@@ -73,6 +107,7 @@
         touch "$out"
       '';
     in {
+      nixvimModules = { default = adapterModule; straps-buff = adapterModule; };
       apps = forAllSystems (pkgs: {
         fetch-deps = {
           type = "app";
@@ -88,6 +123,20 @@
         nvim-0_11 = mkShell pkgs nixpkgs-0_11.legacyPackages.${pkgs.stdenv.hostPlatform.system}.neovim;
       });
       checks = forAllSystems (pkgs: {
+        nixvim-startup =
+          let editor = nixvim.legacyPackages.${pkgs.stdenv.hostPlatform.system}.makeNixvim {
+            imports = [ adapterModule ];
+            nixpkgs.source = nixpkgs;
+            plugins.straps-buff.enable = true;
+            plugins.buff.settings.headless = true;
+          };
+          in pkgs.runCommand "straps-buff-nixvim-startup" { nativeBuildInputs = [ editor ]; } ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            nvim --headless -c 'lua local ok = pcall(function() assert(require("straps.registry").get("tool.buff_operate")) end); if not ok then vim.cmd("cquit 1") end' -c 'qa!'
+            touch "$out"
+          '';
+        nixvim = import ./tests/nixvim.nix { inherit pkgs; module = adapterModule; adapter = mkPlugin pkgs; };
         fetch-deps = fetchDeps pkgs;
         fetch-deps-tests = pkgs.runCommand "fetch-deps-tests" {
           nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.gawk ];

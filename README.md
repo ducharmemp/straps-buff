@@ -17,6 +17,21 @@ require("straps-buff").setup()
 
 `setup()` also accepts an empty table; it rejects other options. It checks for Buff API version 1 and the Straps registry. Repeating unchanged setup preserves registry entries and grants; a conflicting tool definition raises an error. Setup neither grants permissions nor replaces guards.
 
+### Nixvim
+
+Import the flake module into your Nixvim configuration:
+
+```nix
+{
+  imports = [ inputs.straps-buff.nixvimModules.default ];
+  plugins.straps-buff.enable = true;
+  plugins.buff.settings.headless = false;
+  plugins.straps.settings = { };
+}
+```
+
+The module imports and enables the pinned Buff and Straps modules, installs all three plugins, and calls adapter setup after dependency setup. Existing Buff and Straps settings remain configurable through their options. `plugins.straps-buff.package` overrides the adapter package. Explicitly disabling either dependency while enabling the adapter fails a configuration assertion. Linux adds Chromium to the runtime packages; macOS requires an installed Chrome executable configured through `plugins.buff.settings.chrome`. Importing the adapter module already imports the dependency modules; avoid importing other copies of those modules.
+
 For development, enable the host direnv shell hook and run `direnv allow` from this checkout. `.envrc` enters the default Nix shell and prepares pinned dependencies. Both `nix develop` shells also prepare dependencies; unchanged pins preserve local edits. See CONTRIBUTING.md for setup and manual refresh.
 
 ## Admission and shared browser
