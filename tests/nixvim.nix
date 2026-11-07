@@ -1,7 +1,7 @@
-{ pkgs, module, adapter, strapsModule, invert ? 0 }:
+{ pkgs, module, adapter, buffModule, strapsModule, invert ? 0 }:
 let
   inherit (pkgs) lib;
-  evaluate = extra: evaluateWith [ strapsModule ] extra;
+  evaluate = extra: evaluateWith [ buffModule strapsModule ] extra;
   evaluateWith = dependencies: extra: lib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = dependencies ++ [
@@ -17,19 +17,19 @@ let
       extra
     ];
   };
-  enabled = (evaluate { plugins.straps.enable = true; plugins.straps-buff.enable = true; }).config;
+  enabled = (evaluate { plugins.buff.enable = true; plugins.straps.enable = true; plugins.straps-buff.enable = true; }).config;
   disabled = (evaluate { }).config;
   custom = pkgs.vimUtils.buildVimPlugin { pname = "straps-buff-override"; version = "test"; src = adapter.src; };
   overridden = (evaluate {
+    plugins.buff.enable = true;
     plugins.straps.enable = true;
     plugins.straps-buff = { enable = true; package = custom; };
     plugins.buff.settings.headless = true;
     plugins.straps.settings.tools_expanded = true;
   }).config;
-  invalid = (evaluate { plugins.straps-buff.enable = true; plugins.buff.enable = false; }).config;
   independent = (evaluateWith [ ] { plugins.straps-buff.enable = true; }).config;
   checks = [
-    (builtins.length independent.extraPlugins == 2 && !(independent.plugins ? straps))
+    (builtins.length independent.extraPlugins == 1 && !(independent.plugins ? straps) && !(independent.plugins ? buff))
     (builtins.length enabled.extraPlugins == 3)
     (enabled.plugins.buff.enable && disabled.plugins.straps.enable == false)
     (builtins.all (item: item.assertion) enabled.assertions)
@@ -37,7 +37,7 @@ let
     (lib.hasInfix "headless" overridden.extraConfigLua && overridden.plugins.buff.settings.headless)
     (lib.hasInfix "tools_expanded" overridden.extraConfigLua && overridden.plugins.straps.settings.tools_expanded)
     (lib.hasSuffix "require(\"straps-buff\").setup()\n" enabled.extraConfigLua)
-    (!(builtins.all (item: item.assertion) invalid.assertions))
+    (independent.assertions == [ ] && independent.extraPackages == [ ])
     (builtins.elem custom overridden.extraPlugins && !(builtins.elem adapter overridden.extraPlugins))
   ];
 in
