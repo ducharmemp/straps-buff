@@ -1,9 +1,10 @@
-{ pkgs, module, adapter, invert ? 0 }:
+{ pkgs, module, adapter, strapsModule, invert ? 0 }:
 let
   inherit (pkgs) lib;
-  evaluate = extra: lib.evalModules {
+  evaluate = extra: evaluateWith [ strapsModule ] extra;
+  evaluateWith = dependencies: extra: lib.evalModules {
     specialArgs = { inherit pkgs; };
-    modules = [
+    modules = dependencies ++ [
       ({ lib, ... }: {
         options = {
           extraPlugins = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
@@ -16,18 +17,21 @@ let
       extra
     ];
   };
-  enabled = (evaluate { plugins.straps-buff.enable = true; }).config;
+  enabled = (evaluate { plugins.straps.enable = true; plugins.straps-buff.enable = true; }).config;
   disabled = (evaluate { }).config;
   custom = pkgs.vimUtils.buildVimPlugin { pname = "straps-buff-override"; version = "test"; src = adapter.src; };
   overridden = (evaluate {
+    plugins.straps.enable = true;
     plugins.straps-buff = { enable = true; package = custom; };
     plugins.buff.settings.headless = true;
     plugins.straps.settings.tools_expanded = true;
   }).config;
   invalid = (evaluate { plugins.straps-buff.enable = true; plugins.buff.enable = false; }).config;
+  independent = (evaluateWith [ ] { plugins.straps-buff.enable = true; }).config;
   checks = [
+    (builtins.length independent.extraPlugins == 2 && !(independent.plugins ? straps))
     (builtins.length enabled.extraPlugins == 3)
-    (enabled.plugins.buff.enable && enabled.plugins.straps.enable)
+    (enabled.plugins.buff.enable && disabled.plugins.straps.enable == false)
     (builtins.all (item: item.assertion) enabled.assertions)
     (disabled.extraPlugins == [ ] && disabled.extraPackages == [ ] && disabled.extraConfigLua == "")
     (lib.hasInfix "headless" overridden.extraConfigLua && overridden.plugins.buff.settings.headless)

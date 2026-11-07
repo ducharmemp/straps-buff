@@ -36,7 +36,7 @@
       adapterModule = { config, lib, pkgs, ... }:
         let cfg = config.plugins.straps-buff;
         in {
-          imports = [ buffFlake.nixvimModules.default strapsFlake.nixvimModules.default ];
+          imports = [ buffFlake.nixvimModules.default ];
           options.plugins.straps-buff = {
             enable = lib.mkEnableOption "Buff browser tools for Straps";
             package = lib.mkOption {
@@ -47,10 +47,8 @@
           };
           config = lib.mkIf cfg.enable {
             plugins.buff.enable = lib.mkDefault true;
-            plugins.straps.enable = lib.mkDefault true;
             assertions = [
               { assertion = config.plugins.buff.enable; message = "straps-buff requires plugins.buff.enable."; }
-              { assertion = config.plugins.straps.enable; message = "straps-buff requires plugins.straps.enable."; }
             ];
             extraPlugins = [ cfg.package ];
             extraPackages = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.chromium ];
@@ -125,7 +123,8 @@
       checks = forAllSystems (pkgs: {
         nixvim-startup =
           let editor = nixvim.legacyPackages.${pkgs.stdenv.hostPlatform.system}.makeNixvim {
-            imports = [ adapterModule ];
+            imports = [ strapsFlake.nixvimModules.default adapterModule ];
+            plugins.straps.enable = true;
             nixpkgs.source = nixpkgs;
             plugins.straps-buff.enable = true;
             plugins.buff.settings.headless = true;
@@ -136,7 +135,7 @@
             nvim --headless -c 'lua local ok = pcall(function() assert(require("straps.registry").get("tool.buff_operate")) end); if not ok then vim.cmd("cquit 1") end' -c 'qa!'
             touch "$out"
           '';
-        nixvim = import ./tests/nixvim.nix { inherit pkgs; module = adapterModule; adapter = mkPlugin pkgs; };
+        nixvim = import ./tests/nixvim.nix { inherit pkgs; module = adapterModule; strapsModule = strapsFlake.nixvimModules.default; adapter = mkPlugin pkgs; };
         fetch-deps = fetchDeps pkgs;
         fetch-deps-tests = pkgs.runCommand "fetch-deps-tests" {
           nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.gawk ];
