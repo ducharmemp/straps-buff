@@ -53,6 +53,26 @@ it("registers six capabilities without redefining unchanged setup", function()
   plugin.setup()
   for name, version in pairs(versions) do check(registry.get("tool." .. name).version == version, "setup redefined " .. name) end
 end)
+it("serializes object tool schemas without changing variant constraints", function()
+  require("straps.provider").register()
+  local serialized = vim.json.decode(vim.json.encode(registry.call("fn.build_tools")))
+  local by_name = {}
+  for _, tool in ipairs(serialized) do by_name[tool.name] = tool.input_schema end
+  local counts = { buff_inspect = 10, buff_operate = 13, buff_export = 2 }
+  for _, spec in ipairs(tools.specs) do
+    local schema = by_name[spec.name]
+    check(schema and schema.type == "object", spec.name .. " missing serialized object type")
+    check(vim.deep_equal(schema, vim.json.decode(vim.json.encode(spec.schema))), spec.name .. " schema changed during serialization")
+    if counts[spec.name] then
+      local valid = schema.anyOf and #schema.anyOf == counts[spec.name]
+      for _, choice in ipairs(schema.anyOf or {}) do
+        valid = valid and choice.type == "object" and choice.additionalProperties == false and #choice.required > 0
+        for _, field in ipairs(choice.required) do valid = valid and choice.properties[field] ~= nil end
+      end
+      check(valid, spec.name .. " lost variant constraints")
+    end
+  end
+end)
 it("keeps inspection cached and resolves opaque targets for execution", function()
   local data = invoke("buff_inspect", { kind = "status" }).data
   check(type(data.browser) == "string", "browser identity exposed")
