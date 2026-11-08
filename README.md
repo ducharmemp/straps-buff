@@ -15,7 +15,9 @@ Install Buff, Straps, and straps-buff as separate plugins on Neovim's runtimepat
 require("straps-buff").setup()
 ```
 
-`setup()` also accepts an empty table; it rejects other options. It checks for Buff API version 1 and the Straps registry. Repeating unchanged setup preserves registry entries and grants; a conflicting tool definition raises an error. Setup neither grants permissions nor replaces guards.
+`setup()` also accepts an options table; it defines no options and warns once per unknown key. It checks for Buff API version 1 and the Straps registry. Repeating unchanged setup preserves registry entries and grants; a conflicting tool definition raises an error. Setup neither grants permissions nor replaces guards.
+
+`:checkhealth straps-buff` checks Buff API compatibility and tool registration without starting a browser. This plugin uses the MIT license; see LICENSE.
 
 ### Nixvim
 
@@ -38,13 +40,13 @@ For development, enable the host direnv shell hook and run `direnv allow` from t
 | Tool | Capability | Scope |
 | --- | --- | --- |
 | `buff_inspect` | `read` | Cached status, tabs, views, snapshots, operation records, results, and logs |
-| `buff_operate` | `exec` | Lifecycle, tabs, controls, snapshots, refresh, discard, and log observation |
-| `buff_evaluate` | `exec` | Arbitrary page JavaScript |
+| `buff_operate` | `browser` | Lifecycle, tabs, controls, snapshots, refresh, discard, and log observation |
+| `buff_evaluate` | `browser` | Arbitrary page JavaScript |
 | `buff_view` | `exec` | Human browser buffers, contextual help, and view navigation |
-| `buff_export` | `edit` | Exclusive log export, mode `0600`, refusing overwrite |
-| `buff_release` | `read` | Release caller resources without stopping the browser |
+| `buff_export` | `browser` | Exclusive log export, mode `0600`, refusing overwrite |
+| `buff_release` | `browser` | Release caller resources without stopping the browser |
 
-An exact `buff_operate` grant includes start, stop, tab close, and unsaved-buffer discard without secondary prompts or ownership restrictions. Admission comes from trusted Straps execution context, never a model argument. Human Buff operations retain their prompts, and existing Straps guards remain active. The browser is shared across sessions: an admitted stop affects other users of that browser.
+An exact `buff_operate` grant includes start, stop, tab close, and unsaved-buffer discard without secondary prompts or ownership restrictions. A successful stop or view discard posts an `INFO` notification naming the session. Admission comes from trusted Straps execution context, never a model argument. Human Buff operations retain their prompts, and existing Straps guards remain active. The browser is shared across sessions: an admitted stop affects other users of that browser.
 
 Inspection reads caches; it does not start a browser, request a fresh snapshot, or evaluate JavaScript. Use an admitted operation to obtain fresh browser data. Page text, evaluation results, and logs are untrusted and may contain secrets; no complete redaction guarantee exists.
 
@@ -59,20 +61,22 @@ All inputs are objects. Unknown properties are rejected. Tokens are opaque strin
 | `status` | None | API version, lifecycle state, browser token, uncertainty, scheduler state |
 | `tabs` | None | First retained page of cached tab entries, browser token, and list revision |
 | `views` | None | First retained page of view tokens, tab tokens, kind, buffer number, modified/stale/blocked/error state |
-| `list_page` | Required `token`; optional `offset`, `limit` | Retained tab/view list rows |
+| `list_page` | Required `target.token`; optional `offset`, `limit` | Retained tab/view list rows |
 | `operations` | None | Caller-retained operation tokens and `expires_after_seconds` |
-| `operation` | Required `operation` token | Current operation record |
-| `snapshot` | Required `tab` token | Cached snapshot's first page; envelope omits `data` when absent |
-| `page` | Required `snapshot` token; optional `offset`, `limit` | Retained snapshot rows |
-| `events` | Required `observation` token; optional `offset`, `limit` | Retained observed events and loss metadata |
-| `result` | Required `result` token; optional `offset`, `limit` | Chunk of retained JSON-encoded evaluation result |
+| `operation` | Required `target.operation` | Current operation record |
+| `snapshot` | Required `target.tab` | Cached snapshot's first page; envelope omits `data` when absent |
+| `page` | Required `target.snapshot`; optional `offset`, `limit` | Retained snapshot rows |
+| `events` | Required `target.observation`; optional `offset`, `limit` | Retained observed events and loss metadata |
+| `result` | Required `target.result`; optional `offset`, `limit` | Chunk of retained JSON-encoded evaluation result |
 
-`tabs` and `views` retain a bounded copy of the cached list. Their first page uses `tabs` or `views` for its rows and includes `kind`, `token`, `offset`, `total`, `revision`, optional `browser`, and optional `next_offset`. Request subsequent pages with `kind = "list_page"`, the returned `token`, and `offset = next_offset`; these responses use `rows` and have no `data` wrapper. Offsets are one-based row positions; limits are 1–200 rows, default 200. The retained list and revision stay unchanged across pages. String fields whose JSON encoding exceeds 8192 bytes are shortened at UTF-8 boundaries; row `truncation` entries report `field`, `original_bytes`, and `retained_bytes`.
+Resource identifiers belong inside `target`. The corresponding top-level `token`, `operation`, `tab`, `snapshot`, `observation`, and `result` fields remain deprecated aliases. Supply either form, never both.
+
+`tabs` and `views` retain a bounded copy of the cached list. Every paginated response exposes `data.rows`, optional `data.next_offset`, and its alias `data.cursor`. First list pages retain `data.tabs` or `data.views` as aliases. Retained `page`, `list_page`, and `result` responses retain their previous top-level fields. Request subsequent list pages with `kind = "list_page"`, `target = { token = returned_token }`, and `offset = next_offset`. Offsets are one-based row positions; limits are 1–200 rows, default 200. The retained list and revision stay unchanged across pages. String fields whose JSON encoding exceeds 8192 bytes are shortened at UTF-8 boundaries; row `truncation` entries report `field`, `original_bytes`, and `retained_bytes`.
 `page` offsets are one-based row positions, default 1; limits are 1–200 rows, default 200. A page includes `token`, `offset`, `total`, `rows`, `browser`, `tab`, `document`, `revision`, and, when more rows remain, `next_offset`. Pass the returned `token` as the next request's `snapshot`. Retained pages refer to the same snapshot, even after a later browser refresh; they do not establish that its node tokens remain actionable.
 
 `events` offsets are inclusive event sequence numbers, default 1; limits are 1–200 events, default 200. Responses include `events`, `dropped`, `gap`, `revision`, and an optional `next_offset`, plus browser/tab/observation context. `gap` means the requested offset precedes the oldest retained event. Events arrive and expire between requests, so log pagination is not a frozen snapshot. An event too large for a response raises an error; export logs instead.
 
-`result` offsets are one-based byte positions, default 1; limits are 1–60000 bytes, default 8000. Responses contain `result`, `text`, `total_bytes`, and optional `next_offset`. Concatenate `text` chunks before decoding the result JSON. UTF-8 characters are not split; an offset inside a character or a limit too small for one character raises an error. JSON escaping can reduce the returned chunk below the requested limit.
+`result` offsets are one-based byte positions, default 1; limits are 1–60000 bytes, default 8000. Responses contain `result`, `text`, `total_bytes`, and optional `next_offset`. Concatenate `text` chunks before decoding an untruncated result's JSON. A truncated result retains a JSON prefix that may be incomplete and cannot be assumed decodable. UTF-8 characters are not split; an offset inside a character or a limit too small for one character raises an error. JSON escaping can reduce the returned chunk below the requested limit.
 
 ### `buff_operate`
 
@@ -86,28 +90,28 @@ Every request requires `action`. In the table, target fields occur inside `targe
 | `navigate` | Required tab target; required `url` |
 | `close_tab`, `snapshot` | Required tab target |
 | `activate`, `follow` | Required node target |
-| `set_control` | Required node target, `kind`, `value` |
+| `set_control` | Required node target, `control_kind`, `value` |
 | `refresh_view`, `discard_view` | Required view target |
-| `observe` | Required tab target; `kind = "console"` or `"network"` |
-| `unobserve` | Required `observation` token |
+| `observe` | Required tab target; `log_kind = "console"` or `"network"` |
+| `unobserve` | Required `target.observation` |
 
-For `set_control`, `kind = "text"` takes a string of 0–65536 bytes, `checkbox` takes a boolean, and `select` takes a string of 0–65536 bytes or an array of at most 200 nonempty strings. Buff checks whether the target control supports editing. `refresh_view` rejects unsaved edits; `discard_view` authorizes discarding them. `observe` returns an observation token for subsequent cached event retrieval or export.
+For `set_control`, `control_kind = "text"` takes a string of 0–65536 bytes, `checkbox` takes a boolean, and `select` takes a string of 0–65536 bytes or an array of at most 200 nonempty strings. The former `kind` field remains a deprecated alias for `control_kind` or `log_kind`, according to the action. Top-level `observation` remains a deprecated alias for `target.observation`. Supply either form, never both. Buff checks whether the target control supports editing. `refresh_view` rejects unsaved edits; `discard_view` authorizes discarding them. `observe` returns an observation token for subsequent cached event retrieval or export.
 
 ### Other tools
 
-`buff_evaluate` requires `target = { tab = token, browser = optional_token }`, `sequence`, and nonempty `source` up to 64 KiB. `sequence` must be an integer from 1 to 9007199254740991, greater than every sequence previously consumed by the session. It is consumed before submission, including submissions that fail. Every intentional repeat after success or error needs a new sequence. Resource release does not reset the session sequence. No automatic retry occurs.
+`buff_evaluate` requires `target = { tab = token, browser = optional_token }` and nonempty `source` up to 64 KiB. The adapter allocates the next session sequence when `sequence` is omitted. An explicit `sequence` must be an integer from 1 to 9007199254740991, greater than every sequence previously consumed by the session. The adapter consumes each sequence before submission, including submissions that fail. Resource release does not reset the session sequence. An omitted sequence denotes a new intentional execution; it does not make an uncertain execution safe to repeat. Neither adapter nor Buff retries an uncertain execution.
 
 `buff_view` requires `kind = "tabs" | "page" | "eval" | "console" | "network"` and `command = "open" | "help" | "next" | "previous"`. `open` requires a target tab except for `tabs`; other commands require a target view. Its target object permits browser, tab, document, node, and view token fields. These operations change the human's editor view and may request browser data.
 
-`buff_export` requires `path` and either `observation` or `target = { view = token, browser = optional_token }`. Only console/network views are exportable. Paths resolve in Neovim's working directory unless absolute. Export creates a new file with mode `0600` and refuses existing files. A failed partial write can leave a partial file; inspect the operation's effect and byte count before recovery.
+`buff_export` requires `path` and either `target = { observation = token }` or `target = { view = token, browser = optional_token }`. Top-level `observation` remains a deprecated alias; supply only one resource form. Only console/network views are exportable. Paths resolve in Neovim's working directory unless absolute. Export creates a new file with mode `0600` and refuses existing files. A failed partial write can leave a partial file; inspect the operation's effect and byte count before recovery.
 
 `buff_release` takes `{}` and returns `{ "released": true }`. It removes the caller's handles and retained snapshots/results, releases log subscriptions, cancels queued owned operations, and detaches from running work. It never stops the browser. Wiping the Straps session buffer also releases resources.
 
 ## Responses and recovery
 
-Tools return JSON strings. API-derived data uses `{ "untrusted": true, "data": ... }`. Retained `page`, `list_page`, and `result` requests return their page object without the `data` wrapper; `operations` returns `{ "operations": [...], "expires_after_seconds": 600 }`.
+Tools return JSON strings. API-derived data uses `{ "untrusted": true, "data": ... }`. Paginated responses expose `data.rows`, optional `data.next_offset`, and its alias `data.cursor`. Result rows contain one UTF-8-safe text chunk; `data.text` remains available. Events retain `data.events` as an alias for `data.rows`. Row positions, result byte positions, and event sequence numbers remain distinct cursor units. An absent continuation means the current page has no further retained content. Retained `page`, `list_page`, and `result` responses also preserve their former top-level fields; `operations` retains `{ "operations": [...], "expires_after_seconds": 600 }`.
 
-Retained Buff operation records contain an `id` token, `serial`, `action`, `state`, `effect`, and `completed_steps`. Completion can add `outcome`, `value`, `error`, and `reconciliation`. Record states are `queued`, `running`, or `completed`; outcomes include `succeeded`, `failed`, `cancelled`, `rejected`, and `unknown`. Inspect `effect` and per-view reconciliation state rather than treating successful dispatch as proof of the intended page outcome. Evaluation completion replaces `value` with `{ "result": token, "bytes": n }`; a result over 256 KiB instead reports `truncated`, its byte count, and an error without retaining the result.
+Retained Buff operation records contain an `id` token, `serial`, `action`, `state`, `effect`, and `completed_steps`. Completion can add `outcome`, `value`, `error`, and `reconciliation`. Record states are `queued`, `running`, or `completed`; outcomes include `succeeded`, `failed`, `cancelled`, `rejected`, and `unknown`. Inspect `effect` and per-view reconciliation state rather than treating successful dispatch as proof of the intended page outcome. Evaluation completion replaces `value` with `{ "result": token, "bytes": n }`; a result over 256 KiB retains its first 256 KiB, cut at a UTF-8 boundary, and adds `truncated = true` and `retained_bytes`.
 
 Adapter submission responses can differ from retained records. Cancellation after submission returns `id`, `action`, `state = "observer_detached"`, `outcome = "unresolved"`, `effect = "unresolved"`, and `observer_detached = true`; inspect the retained operation for its eventual completion. Cancellation before submission returns only `{ "outcome": "cancelled" }` inside the data envelope. If response conversion fails after dispatch, the adapter returns available identity and operation fields plus `response_error` and `recovery`, and may omit `serial` or `completed_steps`. The operation may have taken effect; free capacity and inspect its record rather than retrying it.
 

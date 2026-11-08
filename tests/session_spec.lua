@@ -18,7 +18,7 @@ end
 local assertion = 0
 local function check(value, message)
   assertion = assertion + 1
-  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value = not value end
+  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value, message = not value, "COUNTERFACTUAL=" .. assertion .. ": " .. message end
   assert(value, message)
 end
 teardown(function() print("ASSERTIONS=" .. assertion) end)
@@ -51,6 +51,16 @@ it("retains four snapshots and pages at two hundred rows", function()
   check(s:page(first, "snapshot", 401).rows[1].text == "401", "last row changed")
   for _ = 1, 4 do s:store("snapshot", { rows = {} }) end
   check(not pcall(s.resolve, s, first, "snapshot"), "oldest snapshot retained")
+end)
+it("allocates sequences without resetting across release and rejects exhaustion", function()
+  local s, buffer = new()
+  check(s:sequence() == 1, "automatic first sequence changed")
+  check(s:sequence(7) == 7 and s:sequence() == 8, "explicit sequence did not advance allocation")
+  sessions.release(buffer)
+  local resumed = sessions.get(buffer, api)
+  check(resumed:sequence() == 9, "release reset automatic allocation")
+  resumed:sequence(9007199254740991)
+  check(not pcall(resumed.sequence, resumed), "exhausted sequence wrapped")
 end)
 it("rejects repeated evaluation sequences across result eviction and release", function()
   local s, buffer = new()

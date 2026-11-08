@@ -2,7 +2,10 @@ local M = {}
 local installed = {}
 
 function M.setup(options)
-  assert(options == nil or (type(options) == "table" and next(options) == nil), "straps-buff: setup accepts no options; configure Buff separately")
+  assert(options == nil or type(options) == "table", "straps-buff: setup options must be a table")
+  for key in pairs(options or {}) do
+    vim.notify("straps-buff: unknown option " .. tostring(key), vim.log.levels.WARN)
+  end
   local ok, api = pcall(require, "buff.api")
   assert(ok, "straps-buff: Buff API v1 is required; install the compatible Buff revision before setup")
   assert(type(api.version) == "function" and api.version() == 1 and type(api.client) == "function",

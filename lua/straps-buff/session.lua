@@ -133,9 +133,11 @@ function Session:resolve(token, kind)
 end
 
 function Session:sequence(value)
+  value = value or self.last_sequence + 1
   assert(type(value) == "number" and value % 1 == 0 and value > self.last_sequence and value <= 9007199254740991,
     "straps-buff: sequence must be a strictly increasing safe positive integer; never retry an uncertain evaluation")
   self.last_sequence = value
+  return value
 end
 
 function M.bound_row(row)
@@ -180,7 +182,7 @@ function Session:page(token, kind, offset, count)
   local bytes = #encoded(result)
   for index = offset, math.min(#rows, offset + count - 1) do
     local size = #encoded(rows[index]) + 1
-    if bytes + size > limits.response - (kind == "list" and 16384 or 1024) then
+    if bytes + size > math.floor(limits.response / 4) - 1024 then
       if #result.rows == 0 then error("straps-buff: row exceeds response limit") end
       break
     end
@@ -188,7 +190,7 @@ function Session:page(token, kind, offset, count)
     bytes = bytes + size
   end
   local next_row = offset + #result.rows
-  if next_row <= #rows then result.next_offset = next_row end
+  if next_row <= #rows then result.next_offset, result.cursor = next_row, next_row end
   return result
 end
 

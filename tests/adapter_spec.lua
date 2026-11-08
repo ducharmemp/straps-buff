@@ -6,7 +6,7 @@ local browser, tab, document, node = {}, {}, {}, {}
 local assertion = 0
 local function check(value, message)
   assertion = assertion + 1
-  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value = not value end
+  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value, message = not value, "COUNTERFACTUAL=" .. assertion .. ": " .. message end
   assert(value, message)
 end
 teardown(function() print("ASSERTIONS=" .. assertion) end)
@@ -141,6 +141,103 @@ it("release affects only the caller and never creates a browser client", functio
   invoke("buff_release", {})
   check(calls[2].action == "release", "client not released")
   check(#calls == 2, "release dispatched additional operation")
+end)
+it("declares browser capability for effectful tools and read for inspection", function()
+  local expected = { buff_inspect = "read", buff_operate = "browser", buff_evaluate = "browser", buff_view = "exec",
+    buff_export = "browser", buff_release = "browser" }
+  for _, spec in ipairs(tools.specs) do check(spec.capability == expected[spec.name], "capability " .. spec.name) end
+end)
+it("names the failing field and the selected variant in validation errors", function()
+  local function message(name, input)
+    local ok, err = pcall(tools.validate, name, input)
+    check(not ok, "invalid input accepted: " .. vim.inspect(input))
+    return err
+  end
+  local cases = {
+    { "buff_operate", { action = "navigate", target = { tab = "t" } },
+      "straps-buff: buff_operate: action=navigate requires target.tab and url (missing url)" },
+    { "buff_operate", { action = "navigate", target = { tab = "t", view = "v" }, url = "u" },
+      "straps-buff: buff_operate: action=navigate does not accept target.view; accepted fields: target.tab url [target.browser]" },
+    { "buff_operate", { action = "start", confirmed = true },
+      "straps-buff: buff_operate: action=start does not accept confirmed; accepted fields: [options.headless]" },
+    { "buff_operate", { action = "bogus" },
+      "straps-buff: buff_operate: action=bogus is not one of start|stop|new_tab|navigate|close_tab|snapshot|activate|follow|set_control|refresh_view|discard_view|observe|unobserve" },
+    { "buff_operate", { action = "set_control", target = { tab = "x", document = "y", node = "z" }, kind = "checkbox", value = "yes" },
+      "straps-buff: buff_operate: action=set_control kind=checkbox requires value to be a boolean" },
+    { "buff_inspect", { kind = "snapshot" }, "straps-buff: buff_inspect requires tab or target; accepted forms: tab | target.tab" },
+    { "buff_inspect", { kind = "page", snapshot = "x", limit = 201 },
+      "straps-buff: buff_inspect: limit must be an integer from 1 to 200" },
+    { "buff_view", { kind = "page", command = "open" },
+      "straps-buff: buff_view: command=open kind=page requires target.tab (missing target)" },
+    { "buff_view", { kind = "tabs", command = "help", target = {} },
+      "straps-buff: buff_view: command=help kind=tabs requires target.view (missing target.view)" },
+    { "buff_export", { path = "p" },
+      "straps-buff: buff_export requires observation or target; accepted forms: observation path | target.observation path | target.view path [target.browser]" },
+    { "buff_export", { path = "p", observation = "o", target = { view = "v" } },
+      "straps-buff: buff_export: target and observation cannot be combined; accepted forms: observation path | target.observation path | target.view path [target.browser]" },
+    { "buff_release", { browser = "x" }, "straps-buff: buff_release does not accept browser; accepted fields: none" },
+  }
+  for _, case in ipairs(cases) do
+    local err = message(case[1], case[2])
+    check(err == case[3], "message mismatch: " .. tostring(err))
+  end
+end)
+it("generates per-variant field lists in tool descriptions", function()
+  local docs = {}
+  for _, spec in ipairs(tools.specs) do docs[spec.name] = spec.doc end
+  for name, fragment in pairs({
+    buff_operate = "action=navigate: target.tab url [target.browser];",
+    buff_inspect = "kind=snapshot: tab;",
+    buff_view = "command=open kind=page|eval|console|network: target.tab [",
+    buff_export = "observation path | target.observation path | target.view path [target.browser]",
+    buff_evaluate = "target.tab source [target.browser sequence]",
+  }) do
+    check(docs[name]:find(fragment, 1, true) ~= nil, name .. " description lacks " .. fragment)
+  end
+  check(docs.buff_inspect:find("Stop without a target", 1, true) == nil, "inspect describes stop")
+  check(docs.buff_operate:find("stop without a target is accepted only during startup", 1, true) ~= nil, "operate lacks stop rule")
+end)
+it("retains the first 256KiB of an oversized evaluation result and marks it truncated", function()
+  local data = invoke("buff_inspect", { kind = "status" }).data
+  local s = sessions.get(buffer, require("buff.api"))
+  local text = string.rep("a", sessions.limits.result - 2) .. "é" .. string.rep("b", 8)
+  s.client.submit = function(_, request, callback)
+    callback({ id = {}, action = request.action, state = "completed", outcome = "succeeded", value = { result = text } })
+    return { id = {}, cancel_observation = function() end }
+  end
+  local value = invoke("buff_evaluate", { target = { tab = data.tab }, sequence = 1, source = "x" }).data.value
+  check(value.truncated == true, "oversized result not marked truncated")
+  check(value.bytes == #vim.json.encode(text), "original byte count lost")
+  check(value.retained_bytes == sessions.limits.result - 1, "retained byte count did not stop before the split character")
+  local retained = s:resolve(value.result, "result")
+  check(#retained == sessions.limits.result - 1 and retained == vim.json.encode(text):sub(1, sessions.limits.result - 1), "prefix not retained")
+end)
+it("notifies the human when stop or discard_view succeeds", function()
+  local notices = {}
+  local original = vim.notify
+  vim.notify = function(message, level) notices[#notices + 1] = { message, level } end
+  local s = sessions.get(buffer, require("buff.api"))
+  local b, v = s:store("browser", browser, true), s:store("view", {}, true)
+  local ok, err = pcall(function()
+    invoke("buff_operate", { action = "stop", target = { browser = b } })
+    invoke("buff_operate", { action = "discard_view", target = { view = v } })
+    invoke("buff_operate", { action = "start" })
+  end)
+  vim.notify = original
+  assert(ok, err)
+  check(#notices == 2, "wrong notice count " .. #notices)
+  check(notices[1][1] == "straps-buff: browser stopped by session " .. buffer and notices[1][2] == vim.log.levels.INFO, "stop notice")
+  check(notices[2][1] == "straps-buff: view discarded by session " .. buffer and notices[2][2] == vim.log.levels.INFO, "discard notice")
+end)
+it("warns about unknown setup options and accepts an options table", function()
+  local notices = {}
+  local original = vim.notify
+  vim.notify = function(message, level) notices[#notices + 1] = { message, level } end
+  local ok, err = pcall(require("straps-buff").setup, { colour = true })
+  vim.notify = original
+  check(ok, "setup rejected options table: " .. tostring(err))
+  check(#notices == 1 and notices[1][1] == "straps-buff: unknown option colour" and notices[1][2] == vim.log.levels.WARN,
+    "unknown option warning missing")
 end)
 it("paginates completed snapshots without rewriting browser-controlled JSON keys", function()
   local s = sessions.get(buffer, require("buff.api"))
@@ -641,6 +738,115 @@ it("omits expired generation values from late completion and historical inspecti
   check(record.value.tab == tab and record.resources_expired == nil, "conversion mutated Buff history")
 end)
 
+it("accepts canonical resources and deprecated aliases without changing API requests", function()
+  local s = sessions.get(buffer, require("buff.api"))
+  local t = s:store("tab", tab, true)
+  local o = s:store("observation", {}, true)
+  local n = s:store("node", node, true)
+  local d = s:store("document", document, true)
+  for _, canonical in ipairs({ false, true }) do
+    local snapshot = { kind = "snapshot" }
+    if canonical then snapshot.target = { tab = t } else snapshot.tab = t end
+    invoke("buff_inspect", snapshot)
+    check(calls[#calls].target.tab == tab, "snapshot target changed")
+    local event = { kind = "events" }
+    if canonical then event.target = { observation = o } else event.observation = o end
+    invoke("buff_inspect", event)
+    check(calls[#calls].observation == s:resolve(o, "observation") and calls[#calls].target == nil, "event API changed")
+    local control = { action = "set_control", target = { tab = t, document = d, node = n }, value = false }
+    control[canonical and "control_kind" or "kind"] = "checkbox"
+    invoke("buff_operate", control)
+    check(calls[#calls].kind == "checkbox" and calls[#calls].control_kind == nil, "control alias leaked")
+    local log = { action = "observe", target = { tab = t } }
+    log[canonical and "log_kind" or "kind"] = "console"
+    invoke("buff_operate", log)
+    check(calls[#calls].kind == "console" and calls[#calls].log_kind == nil, "log alias leaked")
+    local export = { path = "unused" }
+    if canonical then export.target = { observation = o } else export.observation = o end
+    invoke("buff_export", export)
+    check(calls[#calls].observation == s:resolve(o, "observation") and calls[#calls].target == nil, "export API changed")
+  end
+  check(not pcall(tools.validate, "buff_inspect", { kind = "snapshot", tab = t, target = { tab = t } }), "ambiguous resource accepted")
+  check(not pcall(tools.validate, "buff_operate", { action = "observe", target = { tab = t }, kind = "console", log_kind = "console" }), "ambiguous kind accepted")
+end)
+it("preserves operation lookup and unsubscribe through both resource forms", function()
+  local s = sessions.get(buffer, require("buff.api"))
+  local id = {}
+  s.client.operation = function(_, identity)
+    check(identity == id, "operation identity changed")
+    return { id = id, action = "start", outcome = "succeeded" }
+  end
+  local operation = s:store("operation", id, true)
+  for _, canonical in ipairs({ false, true }) do
+    local input = { kind = "operation" }
+    if canonical then input.target = { operation = operation } else input.operation = operation end
+    check(invoke("buff_inspect", input).data.id == operation, "operation response changed")
+    local identity = {}
+    local observation = s:store("observation", identity, true)
+    local unobserve = { action = "unobserve" }
+    if canonical then unobserve.target = { observation = observation } else unobserve.observation = observation end
+    invoke("buff_operate", unobserve)
+    check(calls[#calls].observation == identity and calls[#calls].target == nil, "unsubscribe API changed")
+    check(s.items[observation] == nil, "unsubscribe retained resource")
+  end
+end)
+it("publishes canonical rows and cursors for initial lists and changing event pages", function()
+  local s = sessions.get(buffer, require("buff.api"))
+  for _, kind in ipairs({ "tabs", "views" }) do
+    s.client.inspect = function() return { [kind] = { { title = "one" } } } end
+    local page = invoke("buff_inspect", { kind = kind }).data
+    check(page.rows[1].title == "one" and page[kind][1].title == "one", "initial list rows changed")
+    check(page.cursor == nil and page.next_offset == nil, "terminal list invented continuation")
+  end
+  local observation = s:store("observation", {}, true)
+  s.client.inspect = function() return { events = { { sequence = 5 }, { sequence = 9 } } } end
+  for _, canonical in ipairs({ false, true }) do
+    local input = { kind = "events", limit = 1 }
+    if canonical then input.target = { observation = observation } else input.observation = observation end
+    local page = invoke("buff_inspect", input).data
+    check(page.rows[1].sequence == 5 and page.events[1].sequence == 5, "event rows changed")
+    check(page.cursor == 9 and page.next_offset == 9, "event cursor lost sequence units")
+  end
+end)
+it("allocates evaluation sequences across failures and explicit high-water marks without retries", function()
+  local s = sessions.get(buffer, require("buff.api"))
+  local t = s:store("tab", tab, true)
+  for index, outcome in ipairs({ "failed", "unknown", "succeeded" }) do
+    s.client.submit = function(_, request, callback)
+      calls[#calls + 1] = request
+      callback({ id = {}, action = "evaluate", outcome = outcome })
+      return { id = {}, cancel_observation = function() end }
+    end
+    check(invoke("buff_evaluate", { target = { tab = t }, source = "x" }).data.outcome == outcome, "outcome changed")
+    check(#calls == index and calls[index].sequence == index, "evaluation retried or sequence not allocated")
+  end
+  invoke("buff_evaluate", { target = { tab = t }, source = "x", sequence = 10 })
+  invoke("buff_evaluate", { target = { tab = t }, source = "x" })
+  check(calls[5].sequence == 11, "explicit high-water mark ignored")
+  check(not pcall(invoke, "buff_evaluate", { target = { tab = t }, source = "x", sequence = 10 }), "replay admitted")
+end)
+it("exposes uniform retained page data while preserving legacy fields", function()
+  local s = sessions.get(buffer, require("buff.api"))
+  for _, kind in ipairs({ "list", "snapshot" }) do
+    local token = s:store(kind, { rows = { { text = "a" }, { text = "b" } } })
+    for _, canonical in ipairs({ false, true }) do
+      local key = kind == "list" and "token" or "snapshot"
+      local input = { kind = kind == "list" and "list_page" or "page", limit = 1 }
+      if canonical then input.target = { [key] = token } else input[key] = token end
+      local page = invoke("buff_inspect", input)
+      check(page.data.rows[1].text == "a" and page.rows[1].text == "a", "page rows changed")
+      check(page.data.next_offset == 2 and page.data.cursor == 2, "page continuation changed")
+    end
+  end
+  local token = s:store("result", "abcdef")
+  for _, canonical in ipairs({ false, true }) do
+    local input = { kind = "result", limit = 2 }
+    if canonical then input.target = { result = token } else input.result = token end
+    local page = invoke("buff_inspect", input)
+    check(page.data.rows[1] == "ab" and page.text == "ab", "result rows changed")
+    check(page.data.cursor == 3 and page.data.next_offset == 3, "result continuation changed")
+  end
+end)
 it("reports incompatible dependencies and registry collisions", function()
   local plugin = require("straps-buff")
   plugin.setup()

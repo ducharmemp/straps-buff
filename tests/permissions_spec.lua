@@ -85,6 +85,7 @@ it("exact operate grant admits start stop close and discard without extra prompt
   local t = s:store("tab", {}, true)
   local v = s:store("view", {}, true)
   registry.grant(buffer, registry.tool_grant_key("buff_operate"))
+  registry.grant(buffer, registry.tool_grant_key("buff_release"))
   require("straps-buff").setup()
   script({ { name = "buff_operate", input = { action = "start" } },
     { name = "buff_operate", input = { action = "stop", target = { browser = b } } },

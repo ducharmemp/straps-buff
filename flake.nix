@@ -15,7 +15,7 @@
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      pluginFiles = lib.fileset.unions ([ ./README.md ./doc ]
+      pluginFiles = lib.fileset.unions ([ ./README.md ./LICENSE ./doc ]
         ++ lib.optional (builtins.pathExists ./lua) ./lua
         ++ lib.optional (builtins.pathExists ./plugin) ./plugin);
       pluginSource = lib.fileset.toSource { root = ./.; fileset = pluginFiles; };
@@ -27,6 +27,7 @@
         pname = "straps-buff";
         version = "dev";
         src = pluginSource;
+        meta.license = lib.licenses.mit;
       };
       dependencyFlake = source:
         let outputs = (import "${source}/flake.nix").outputs { self = source // outputs; inherit nixpkgs; };
@@ -63,6 +64,7 @@
       mkShell = pkgs: neovim: pkgs.mkShell {
         packages = testPackages pkgs neovim ++ [ pkgs.direnv pkgs.coreutils (fetchDeps pkgs) ]
           ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.chromium ];
+        STRAPS_ROOT = toString straps;
         STRAPS_BUFF_BUFF_SOURCE = toString buff;
         STRAPS_BUFF_STRAPS_SOURCE = toString straps;
         STRAPS_BUFF_FETCH_SCRIPT = toString ./scripts/fetch-deps.sh;
@@ -79,7 +81,7 @@
         chmod -R u+w source
         cd source
         export STRAPS_BUFF_BUFF_PATH=${buff}
-        export STRAPS_BUFF_STRAPS_PATH=${straps}
+        export STRAPS_ROOT=${straps}
         export HOME="$TMPDIR/home"
         export XDG_CONFIG_HOME="$HOME/.config"
         export XDG_DATA_HOME="$HOME/.local/share"
