@@ -4,7 +4,7 @@ This document describes the adapter's source contracts for implementers and revi
 
 ## Responsibilities
 
-Buff API v1 owns lifecycle, opaque tab and document identities, page execution, mutation scheduling, reconciliation, and structured completion records. Human operations and adapter operations share Buff's scheduler. straps-buff owns six registry entries, capability declarations, session-scoped tokens, bounded responses, and caller resource retention. Straps core remains unchanged.
+Buff API v1 owns lifecycle, opaque tab and document identities, page execution, mutation scheduling, reconciliation, and structured completion records. Human operations and adapter operations share Buff's scheduler. straps-buff owns six registry entries, capability declarations, session-scoped tokens, bounded responses, and caller resource retention. The adapter registers the `browser` grantable category through Straps' `fn.capability` extension mechanism.
 
 The flake pins published Buff API v1 revision `45ad0cb763138be7eeb03436bd34f0add7036257` and Straps revision `7396033c8f3b59d0664a030e5cbd6457e77e9ef7` as source inputs. Package checks use those sources directly. The fetch-deps app copies them into ignored `.deps` directories for local tests and records the source paths only after both copies install. Development shells and `.envrc` prepare missing or changed dependencies; matching markers preserve local edits. Preparation failure aborts entry. Dependency sources remain excluded from the plugin package.
 
@@ -32,7 +32,7 @@ An unexpected backend disconnect advances the lifecycle generation and emits a s
 
 The six tools declare `read`, `exec`, or `browser` as listed in README.md. An exact `buff_operate` grant includes start, stop, close, and discard with no additional prompt or browser ownership restriction; a successful stop or view discard notifies the human. Admission belongs to trusted Straps execution context. Human Buff actions retain confirmation prompts. Direct registry calls bypass admission and cannot establish permission-test coverage.
 
-Setup runs from trusted configuration outside a Straps session. It requires API version 1, warns about unknown option keys, rejects registry collisions, and preserves registry versions and exact grants on unchanged repeated calls. It does not alter guards or grant permissions. Buff configuration remains separate.
+Setup runs from trusted configuration outside a Straps session after Straps setup. It requires API version 1, warns about unknown option keys, and rejects registry collisions before extending the classifier. It chains `fn.capability` to add `browser` when absent, copies the delegated category array, and preserves delegated tool classification. A preexisting `browser` category leaves the classifier unchanged. Unchanged repeated calls preserve registry versions and exact grants. It does not alter guards or grant permissions. Buff configuration remains separate.
 
 ## Output and views
 

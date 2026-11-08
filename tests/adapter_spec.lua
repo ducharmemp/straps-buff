@@ -1,3 +1,4 @@
+require("straps").setup({})
 local registry = require("straps.registry")
 local tools = require("straps-buff.tools")
 local sessions = require("straps-buff.session")

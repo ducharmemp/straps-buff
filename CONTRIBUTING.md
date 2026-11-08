@@ -65,7 +65,7 @@ nix develop path:. --no-write-lock-file --command bash -c 'cd .deps/buff && fail
 nix develop path:.#nvim-0_11 --no-write-lock-file --command bash -c 'cd .deps/buff && fail=0; for spec in tests/*_spec.lua; do BUFF_REQUIRE_CHROME=1 busted "$spec" || fail=1; done; exit "$fail"'
 ```
 
-Straps is unmodified; any Straps change requires separate approval before running a changed-core acceptance process.
+To verify a coordinated Straps core change, set `STRAPS_ROOT` to the changed checkout after `--command`, for example `--command env STRAPS_ROOT=/absolute/path/to/straps bash -c '...'`. The shell's default points to the pinned upstream input. Run the focused setup and permission specs and both full adapter suites against the changed core.
 
 ## Platform acceptance
 

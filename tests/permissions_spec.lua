@@ -30,7 +30,7 @@ end
 local assertion = 0
 local function check(value, message)
   assertion = assertion + 1
-  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value = not value end
+  if tonumber(vim.env.STRAPS_BUFF_INVERT) == assertion then value, message = not value, "COUNTERFACTUAL=" .. assertion .. ": " .. message end
   assert(value, message)
 end
 teardown(function() print("ASSERTIONS=" .. assertion) end)
@@ -69,6 +69,14 @@ after_each(function()
     if vim.api.nvim_buf_is_valid(buffer) then vim.api.nvim_buf_delete(buffer, { force = true }) end
   end
   buffers = {}
+end)
+it("admits browser category grants through the model loop", function()
+  local buffer = new()
+  registry.grant(buffer, "cap:browser")
+  script({ { name = "buff_operate", input = { action = "start" } } })
+  run(buffer)
+  check(table.concat(dispatched, ",") == "start", "browser category grant did not dispatch start")
+  check(prompts == 0, "browser category grant prompted")
 end)
 it("denies execution before dispatch while cached inspection stays permission-free", function()
   script({ { name = "buff_operate", input = { action = "start" } }, { name = "buff_inspect", input = { kind = "status" } } })

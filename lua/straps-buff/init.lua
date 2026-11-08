@@ -14,6 +14,7 @@ function M.setup(options)
   assert(found and type(registry.define) == "function" and type(registry.get) == "function",
     "straps-buff: Straps registry is required; install Straps before setup")
   assert(registry.active_scope() == nil, "straps-buff: setup must run from trusted configuration outside a Straps session")
+  assert(registry.get("fn.capability"), "straps-buff: Straps setup must run before adapter setup")
   local specs = require("straps-buff.tools").specs
   for _, spec in ipairs(specs) do
     local name = "tool." .. spec.name
@@ -23,6 +24,20 @@ function M.setup(options)
     else
       assert(not installed[name], "straps-buff: registered tool was removed: " .. name)
     end
+  end
+  if not vim.tbl_contains(registry.call("fn.capability"), "browser") then
+    registry.define({ name = "fn.capability", kind = "fn",
+      doc = "Delegate tool classification and add the browser grantable category.",
+      source = [==[
+local base = require("straps.registry").bind("fn.capability")
+return function(name, input)
+  if name ~= nil then return base(name, input) end
+  local categories = vim.list_extend({}, base())
+  if not vim.tbl_contains(categories, "browser") then categories[#categories + 1] = "browser" end
+  return categories
+end
+]==],
+    }, { scope = "global" })
   end
   for _, spec in ipairs(specs) do
     local name = "tool." .. spec.name

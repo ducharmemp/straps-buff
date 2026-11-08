@@ -1,3 +1,4 @@
+require("straps").setup({})
 local registry = require("straps.registry")
 local session_buffer
 local sequence = 0

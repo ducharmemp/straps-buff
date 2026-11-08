@@ -23,7 +23,11 @@ Configure Buff separately. From trusted configuration outside a Straps session: 
 Setup accepts an options table, defines no options, and warns for each unknown
 key. It checks API version 1 and the
 Straps registry, rejects collisions, and preserves unchanged registry entries
-and grants on repeat calls. It neither grants permissions nor replaces guards.
+and grants on repeat calls. Run Straps setup first. The adapter extends
+fn.capability to add the browser grantable category while preserving existing
+categories and tool classification. Core does not define browser policy.
+:StrapsAuto browser grants browser tools to a session. Setup neither grants
+permissions nor replaces guards.
 :checkhealth straps-buff reports API compatibility and tool registration without
 starting a browser. See LICENSE for the MIT license.
 

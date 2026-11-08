@@ -37,6 +37,8 @@ For development, enable the host direnv shell hook and run `direnv allow` from t
 
 ## Admission and shared browser
 
+Run Straps setup before straps-buff setup. The adapter adds `browser` to Straps' grantable categories through `fn.capability`; core does not define that category. Existing categories and tool classification remain unchanged. Repeated setup preserves the classifier when `browser` is already registered. Use `:StrapsAuto browser` to grant browser tools to a session.
+
 | Tool | Capability | Scope |
 | --- | --- | --- |
 | `buff_inspect` | `read` | Cached status, tabs, views, snapshots, operation records, results, and logs |
