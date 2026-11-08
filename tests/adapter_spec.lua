@@ -53,24 +53,48 @@ it("registers six capabilities without redefining unchanged setup", function()
   plugin.setup()
   for name, version in pairs(versions) do check(registry.get("tool." .. name).version == version, "setup redefined " .. name) end
 end)
-it("serializes object tool schemas without changing variant constraints", function()
+it("serializes provider-compatible schemas and retains variant validation", function()
   require("straps.provider").register()
   local serialized = vim.json.decode(vim.json.encode(registry.call("fn.build_tools")))
   local by_name = {}
   for _, tool in ipairs(serialized) do by_name[tool.name] = tool.input_schema end
-  local counts = { buff_inspect = 10, buff_operate = 13, buff_export = 2 }
-  for _, spec in ipairs(tools.specs) do
-    local schema = by_name[spec.name]
-    check(schema and schema.type == "object", spec.name .. " missing serialized object type")
-    check(vim.deep_equal(schema, vim.json.decode(vim.json.encode(spec.schema))), spec.name .. " schema changed during serialization")
-    if counts[spec.name] then
-      local valid = schema.anyOf and #schema.anyOf == counts[spec.name]
-      for _, choice in ipairs(schema.anyOf or {}) do
-        valid = valid and choice.type == "object" and choice.additionalProperties == false and #choice.required > 0
-        for _, field in ipairs(choice.required) do valid = valid and choice.properties[field] ~= nil end
-      end
-      check(valid, spec.name .. " lost variant constraints")
+  for name, required in pairs({ buff_inspect = "kind", buff_operate = "action", buff_export = "path" }) do
+    local schema = by_name[name]
+    check(schema and schema.type == "object" and not schema.anyOf and not schema.oneOf and not schema.allOf, name .. " root schema")
+    check(schema.additionalProperties == false and #schema.required == 1 and schema.required[1] == required, name .. " required fields")
+  end
+  local function alternatives(schema, field)
+    local result = {}
+    for _, choice in ipairs(schema.properties[field].anyOf or { schema.properties[field] }) do
+      for _, value in ipairs(choice.enum or {}) do result[value] = true end
     end
+    return result
+  end
+  local kinds = alternatives(by_name.buff_inspect, "kind")
+  for _, kind in ipairs({ "status", "tabs", "views", "operations", "list_page", "snapshot", "events", "operation", "page", "result" }) do
+    check(kinds[kind], "missing inspect kind " .. kind)
+  end
+  local actions = alternatives(by_name.buff_operate, "action")
+  for _, action in ipairs({ "start", "stop", "new_tab", "navigate", "close_tab", "snapshot", "activate", "follow", "set_control", "refresh_view", "discard_view", "observe", "unobserve" }) do
+    check(actions[action], "missing action " .. action)
+  end
+  local limits = by_name.buff_inspect.properties.limit.anyOf
+  check(limits and limits[1].maximum == 200 and limits[2].maximum == 60000, "inspect limits")
+  check(by_name.buff_operate.properties.target.anyOf ~= nil, "target alternatives missing")
+  check(by_name.buff_export.properties.observation and by_name.buff_export.properties.target, "export alternatives missing")
+  for _, case in ipairs({
+    { "buff_inspect", { kind = "result", result = "r", limit = 60000 }, true },
+    { "buff_inspect", { kind = "page", snapshot = "s", limit = 201 }, false },
+    { "buff_inspect", { kind = "unknown" }, false },
+    { "buff_operate", { action = "navigate", target = { tab = "t" }, url = "url" }, true },
+    { "buff_operate", { action = "navigate", target = { tab = "t" } }, false },
+    { "buff_operate", { action = "start", extra = true }, false },
+    { "buff_export", { path = "p", observation = "o" }, true },
+    { "buff_export", { path = "p", target = { view = "v" } }, true },
+    { "buff_export", { path = "p" }, false },
+    { "buff_export", { path = "p", observation = "o", target = { view = "v" } }, false },
+  }) do
+    check(pcall(tools.validate, case[1], case[2]) == case[3], "validation " .. vim.inspect(case))
   end
 end)
 it("keeps inspection cached and resolves opaque targets for execution", function()

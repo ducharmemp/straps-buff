@@ -75,8 +75,36 @@ M.specs = {
   { name = "buff_release", capability = "read", schema = object({}),
     doc = "Release this session's browser handles, cached results and log observations. Cancels queued owned operations and detaches running observations. Never stops the browser." },
 }
+M.specs[1].doc = M.specs[1].doc .. " Kinds status, tabs, views and operations require only kind; list_page requires token; snapshot requires tab; events requires observation; operation requires operation; page requires snapshot; result requires result. Only list_page, events, page and result accept offset and limit. Their limit maximum is 200, except result allows 60000. Supply only fields belonging to the chosen kind."
+M.specs[2].doc = M.specs[2].doc .. " start accepts options; stop accepts target; new_tab and navigate require target and url; close_tab, snapshot, activate, follow, refresh_view and discard_view require target; set_control requires target, kind and value; observe requires target and kind; unobserve requires observation. For stop, target requires browser; new_tab requires browser; navigate, close_tab, snapshot and observe require tab; activate, follow and set_control require tab, document and node; refresh_view and discard_view require view. Each target may also include browser. set_control requires a boolean for checkbox, a string for text, and a string or string array for select. Supply only fields belonging to the chosen action."
+M.specs[5].doc = M.specs[5].doc .. " Supply path and exactly one of observation or target."
 local by_name = {}
-for _, spec in ipairs(M.specs) do by_name[spec.name] = spec end
+for _, spec in ipairs(M.specs) do
+  by_name[spec.name] = spec
+  if spec.schema.anyOf then
+    spec.validation_schema = spec.schema
+    local properties, required = {}, nil
+    for _, choice in ipairs(spec.validation_schema.anyOf) do
+      local present = {}
+      for _, key in ipairs(choice.required) do present[key] = true end
+      if not required then
+        required = vim.deepcopy(choice.required)
+      else
+        required = vim.tbl_filter(function(key) return present[key] end, required)
+      end
+      for key, schema in pairs(choice.properties) do
+        properties[key] = properties[key] or {}
+        if not vim.iter(properties[key]):any(function(existing) return vim.deep_equal(existing, schema) end) then
+          table.insert(properties[key], schema)
+        end
+      end
+    end
+    for key, choices in pairs(properties) do
+      properties[key] = #choices == 1 and choices[1] or { anyOf = choices }
+    end
+    spec.schema = object(properties, required)
+  end
+end
 
 local function matches(value, schema)
   if schema.anyOf then
@@ -103,7 +131,7 @@ local function matches(value, schema)
 end
 
 function M.validate(name, input)
-  assert(by_name[name] and matches(input, by_name[name].schema), "straps-buff: invalid " .. name .. " arguments; follow the operation schema")
+  assert(by_name[name] and matches(input, by_name[name].validation_schema or by_name[name].schema), "straps-buff: invalid " .. name .. " arguments; follow the operation schema")
   if input.action == "set_control" then
     assert((input.kind == "checkbox" and type(input.value) == "boolean")
       or (input.kind == "text" and type(input.value) == "string")
