@@ -100,6 +100,16 @@
         [ "$fail" -eq 0 ]
         touch "$out"
       '';
+      mkTrynix = pkgs: pkgs.wrapNeovimUnstable pkgs.neovim-unwrapped {
+        plugins = [
+          strapsFlake.packages.${pkgs.stdenv.hostPlatform.system}.default
+          buffFlake.packages.${pkgs.stdenv.hostPlatform.system}.default
+          (mkPlugin pkgs)
+        ];
+        waylandSupport = false;
+        luaRcContent = ''require("straps").setup({}) require("buff").setup({ headless = true }) require("straps-buff").setup()'';
+        wrapperArgs = [ "--prefix" "PATH" ":" (lib.makeBinPath [ pkgs.curl pkgs.ripgrep ]) ];
+      };
     in {
       nixvimModules = { default = adapterModule; straps-buff = adapterModule; };
       apps = forAllSystems (pkgs: {
@@ -111,6 +121,7 @@
       });
       packages = forAllSystems (pkgs: {
         default = mkPlugin pkgs;
+        trynix = mkTrynix pkgs;
       });
       devShells = forAllSystems (pkgs: {
         default = mkShell pkgs pkgs.neovim;
